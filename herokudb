@@ -109,15 +109,6 @@ Note that pulling skips remote and local backups, so it's mainly useful
 for impulsive needs. Creating a remote backup first makes for a much more
 reliable workflow.
 
-## Installing herokudb script
-
-For convenience, install this script to your `/usr/local/bin` folder. Use
-the `script` action:
-
-    herokudb script
-
-Optionally add `-b /somewhere/else` to install it somewhere else.
-
 ## Resuming failed download
 
 By default, failed downloads are resumed on the next attempt. This only
@@ -153,13 +144,11 @@ action:
   pipe       conveniently download and restore in one go
   pull       pull directly from remote database, no backup involved
   clear      empty local database
-  script     copy herokudb to /usr/local/bin/herokudb
 params:
   -a|--app <app>            name of app on heroku
   -d|--database <database>  name of local database
   -i|--id <backup>          name of backup (download, pipe)
   -s|--sed <regex>          filter regex (pipe, restore)
-  -b|--bin-dir <path>       script path (copy)
   -r|--remote <database>    name of remote database
   -c|--account <account>    account name (for heroku-accounts plugin)
 options:
@@ -184,7 +173,6 @@ def print_help(verbose)
   puts "  sed        #{@sed}" if @sed
   puts "  force      #{@force || false}"
   puts "  priority   #{@priority || false}"
-  puts "  bin_dir    #{@bin_dir}" if @bin_dir
   puts "  remote     #{@remote}" if @remote
   puts "  verbose    #{@verbose || false}"
   puts "  action     #{@action}" if @action
@@ -365,7 +353,6 @@ def main
   @app = nil
   @database = nil
   @action = nil
-  @bin_dir = '/usr/local/bin'
   @sed = nil
   @force = false
   @template = '_template'
@@ -401,10 +388,6 @@ def main
       i += 1
       @sed = ARGV[i]
       err_line "expecting sed string, e.g. '/\ACREATE INDEX.*ON table USING.*;\z/d'" unless @sed && @sed =~ /\A[^-]/
-    when '-b', '--bin-dir'
-      i += 1
-      @bin_dir = ARGV[i]
-      err_line 'expecting bin directory' unless @bin_dir && @bin_dir =~ /\A[^-]/
     when '-r', '--remote'
       i += 1
       @remote = ARGV[i]
@@ -427,7 +410,6 @@ def main
       when 'pipe', 'p' then :pipe
       when 'pull', 'l' then :pull
       when 'clear', 'c' then :clear
-      when 'script', 's' then :script
       when 'version', '?' then :version
       when 'help', 'h' then :help
       end
@@ -508,15 +490,6 @@ def main
   when :clear
     drop_for_database(@database)
     create_for_database(@database)
-  when :script
-    info_line "installing herokudb script.. dir: #{@bin_dir}"
-    tested = run_cmd "test -d #{@bin_dir}"
-    err_line "#{@bin_dir} does not exists" unless tested
-    print `diff herokudb #{@bin_dir}/herokudb` if @verbose
-    line = run_cmd "cp #{@verbose ? '-v ' : ''}herokudb #{@bin_dir}/herokudb"
-    err_line 'unable to install script' unless line
-    info_line "#{line}"
-    info_line '.. installed'
   when :help
     print_help(true)
   when :version
