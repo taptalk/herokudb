@@ -1,0 +1,531 @@
+#!/usr/bin/env ruby
+
+HDB_VERSION = '0.3.2'
+
+HDB_LONGHELP = <<-HDB_LONGHELP
+
+Heroku makes daily backups of your databases, you run a local Postgres
+database to experiment with, but how to get the backup to your local
+machine, conveniently? Use this script!
+
+## Getting the backup restored locally
+
+Enable the 'PG Backups' addon, e.g. using `heroku addons:add pgbackups`.
+
+Typical use takes three commands:
+
+    herokudb download -a my_app
+    herokudb restore -a my_app -d my_database
+    herokudb deploy -d my_database
+
+1. The first line will download the database backup to the `tmp/` folder,
+   after which no internet connectivity is required anymore.
+2. The second will restore the database to `my_database_tempate`, turning
+   the archive file into a live database.
+3. The third will recreate `my_database` using the template, usually a
+   quick final step compared to the restore process.
+
+## Tweaking the process
+
+To restore while downloading (and speed up the process), use the 'pipe'
+action instead of 'download' and 'restore':
+
+    herokudb pipe -a my_app -d my_database
+    herokudb deploy -d my_database
+
+In order to have minimal downtime on the local database, we use a template
+database for restoring (and piping). The replacing of the database content
+is done with the `deploy` action, which is therefore separate from the
+`restore` or `pipe` action. To disable the use of a template database (and
+further speed up the process), use the `-n` option.
+
+    herokudb restore -n -a my_app -d my_database
+    herokudb pipe -n -a my_app -d my_database
+
+The restoring of a database dumb is usually quite a cpu- and disk-intensive
+operation. By default the restore and pipe action use the `nice -n 20`
+utility to minimize this impact. Use the `-p` option to run these actions
+on normal priority:
+
+    herokudb restore -p -a my_app -d my_database
+    herokudb pipe -p my_app -d my_database
+
+So in short, the fastest way to download, restore and deploy a database is
+by using the pipe action in combination with `-n` and `-p`:
+
+    herokudb pipe -n -p -a my_app -d my_database
+
+However in practice, it is usually more convenient to take the two-step
+approach:
+
+    herokudb pipe -a my_app -d my_database --verbose
+    herokudb deploy -d my_database --verbose
+
+## Checking for new backups
+
+To get a list of all remote and local backups, use the `list` action:
+
+    herokudb list -a my_app
+
+We prevent double-downloading of backups by keeping track of heroku's
+database IDs. To force the re-download of a backup use the `-f` option:
+
+    herokudb download -f -a my_app
+    herokudb pipe -f my_app -d my_database
+
+To check if the latest backup is already downloaded, use the `available`
+action:
+
+    herokudb available -a my_app
+
+## Accessing older backups
+
+By default, we download and restore the latest backup. To indicate a
+specific older database, use the `-i` option to specify the database ID:
+
+    herokudb download -i a98 -a my_app
+
+## Filtering dump data
+
+To skip certain parts of the database dump during the restoring of it,
+use the `-s` option, followed by a regex. For example to skip all indexes
+of a table, use:
+
+    herokudb restore -s '/^CREATE INDEX.*ON my_table USING.*;$/d' -a my_app -d my_database
+
+To filter using this regex, we first decompress the dump and then run it
+through the `sed` command. The use of `-s` can have a significant impact
+on performance.
+
+## Skipping backups
+
+Heroku's backups are an efficient way to restore databases locally. They
+however require a backup to be present. To skip backups and get a direct
+copy of the remote database, use the pull action:
+
+    herokudb pull -a my_app -d my_database
+
+Note that pulling skips remote and local backups, so it's mainly useful
+for impulsive needs. Creating a remote backup first makes for a much more
+reliable workflow.
+
+## Installing herokudb script
+
+For convenience, install this script to your `/usr/local/bin` folder. Use
+the `script` action:
+
+    herokudb script
+
+Optionally add `-b /somewhere/else` to install it somewhere else.
+
+## Resuming failed download
+
+By default, failed downloads are resumed on the next attempt. This only
+applies to the `download` action; `pipe` actions always start from scratch.
+A download can be forced to start from scratch by adding `-f`.
+
+## Using the Heroku Accounts plugin
+
+If you're accessing multiple accounts on Heroku using the accounts plugin,
+then make sure to add the `-c` option to provide the account name.
+
+    herokudb pipe -a my_app -d my_database -c my_account
+
+## License
+
+HerokuDB is licensed under the terms of the MIT License.
+
+Made by @leonardvandriel. Copyright (c) 2013 Wit Dot Media Berlin GmbH.
+
+HDB_LONGHELP
+
+HDB_SHORTHELP = <<-HDB_SHORTHELP
+
+usage:
+  herokudb [action] [params] [options]
+action:
+  help       print extended help
+  list       show local and remote backups
+  available  check for new remote backup
+  download   download remote backup to local archive
+  restore    restore local archive into template database
+  deploy     deploy template database in place, ready for use
+  pipe       conveniently download and restore in one go
+  pull       pull directly from remote database, no backup involved
+  clear      empty local database
+  script     copy herokudb to /usr/local/bin/herokudb
+params:
+  -a|--app <app>            name of app on heroku
+  -d|--database <database>  name of local database
+  -i|--id <backup>          name of backup (download, pipe)
+  -s|--sed <regex>          filter regex (pipe, restore)
+  -b|--bin-dir <path>       script path (copy)
+  -r|--remote <database>    name of remote database
+  -c|--account <account>    account name (for heroku-accounts plugin)
+options:
+  -n|--no-template          not use template database (restore, deploy, pipe, pull)
+  -f|--force                force re-download (download, pipe)
+  -p|--priority             restore with normal cpu/disk priority (restore, pipe)
+  -v|--verbose              output more text
+  -?|--version              output version number
+  -h|--help                 print extended help
+HDB_SHORTHELP
+
+# output
+
+def print_help(verbose)
+  puts 'A Heroku to local database script'
+  puts((@verbose || verbose) ? HDB_LONGHELP : "\nFor extended help run: herokudb help")
+  puts HDB_SHORTHELP
+  puts 'configuration:'
+  puts "  app        #{@app}" if @app
+  puts "  database   #{@database}" if @database
+  puts "  id         #{@id}" if @id
+  puts "  sed        #{@sed}" if @sed
+  puts "  force      #{@force || false}"
+  puts "  priority   #{@priority || false}"
+  puts "  bin_dir    #{@bin_dir}" if @bin_dir
+  puts "  remote     #{@remote}" if @remote
+  puts "  verbose    #{@verbose || false}"
+  puts "  action     #{@action}" if @action
+  puts "  account    #{@account}" if @account
+  puts "  version    #{HDB_VERSION}"
+end
+
+def run_cmd(cmd)
+  puts "run: #{cmd}" if @verbose
+  output = `#{cmd}` || ''
+  status = $?.exitstatus
+  status == 0 ? output.strip : nil
+end
+
+def info_line(line)
+  puts "#{line}" if @verbose
+end
+
+def err_line(line)
+  abort "error: #{line}"
+end
+
+# helpers
+
+def url_for_id_app(id, app, account)
+  url = run_cmd "heroku pgbackups:url #{id} --app #{app}#{account_option(account)}"
+  err_line 'unable to list heroku backups' unless url
+  err_line "no url found for id: #{id}" unless url.size > 0
+  url
+end
+
+def indices_for_app_id(app, id, account)
+  data = run_cmd "heroku pgbackups --app #{app}#{account_option(account)} | grep 'Finished @' | awk '{print $1, $2, $3, $8}'"
+  err_line 'unable to query heroku backups' unless data
+  indices = (data.split("\n") || []).map do |l|
+    split = l.split(' ', 4)
+    next unless id.nil? || split[0] == id
+    scan = "#{split[1]} #{split[2]}".scan(/[0-9]+/)[0, 6]
+    [split[0], Time.utc(*scan, '+00:00'), split[3] || 'broken']
+  end
+  indices.compact.sort { |a, b| a[1] <=> b[1] }
+end
+
+def remote_for_app(app, account)
+  data = run_cmd "heroku pg:info --app #{app}#{account_option(account)} | grep '(DATABASE_URL)'"
+  err_line 'unable to list heroku backups' unless data
+  data.split("\n").first.split(' ')[1]
+end
+
+def filter_string(string)
+  string.downcase.gsub(/[^a-z0-9]+/, '_').chomp('_') if string
+end
+
+def file_for_id_app(id, app, time)
+  file = filter_string((app || '') + ' at ' + id + ' ' + time.utc.to_s)
+  "tmp/#{file}.dump"
+end
+
+def list_for_app_id(app, id)
+  prefix = filter_string(app)
+  files = run_cmd "ls -l tmp | grep '#{prefix}_at_#{id}.*utc\.dump$' | awk '{print $5, $9}'"
+  err_line 'unable to list local backups' unless files
+  indices = files.split("\n").map do |l|
+    size, l = l.split(' ', 2)
+    _, l = l.split('_at_', 2)
+    i, l = l.split('_', 2)
+    time = l.split('_', 7)[0, 6]
+    [i, Time.utc(*(time), '+00:00'), "#{(size.to_i / 1_048_576.0).round(1)}MB"] # 1048576, that's heroku
+  end
+  indices.compact.sort { |a, b| a[1] <=> b[1] }
+end
+
+def recent_for_app(app, id)
+  last = list_for_app_id(app, id).last
+  err_line "no recent dump found for app: #{app}" unless last && last.size > 0
+  last
+end
+
+def file_for_app_id?(app, id)
+  list_for_app_id(app, id).size > 0
+end
+
+def restore_command(database, sed)
+  if sed && sed.size
+    "pg_restore #{@verbose ? '--verbose ' : ''}--no-privileges --no-owner | sed '#{sed}' | #{@priority ? '' : 'nice -n 20 '}psql --dbname=#{database}"
+  else
+    "#{@priority ? '' : 'nice -n 20 '}pg_restore #{@verbose ? '--verbose ' : ''}--dbname=#{database} --no-privileges --no-owner"
+  end
+end
+
+def account_option(account)
+  " --account #{account}" if account
+end
+
+# operations
+
+def drop_for_database(database)
+  info_line "dropping.. database: #{database}"
+  list = run_cmd "psql --list | grep ' #{database} '"
+  if list && list.size > 0
+    dropped = run_cmd "psql --command='drop database #{database};'"
+    err_line "failed to drop database: #{database}" unless dropped
+  else
+    info_line 'already dropped'
+  end
+  info_line '..dropped'
+end
+
+def create_for_database(database)
+  info_line "creating.. database: #{database}"
+  created = run_cmd "psql --command='create database #{database};'"
+  err_line "failed to create database: #{database}" unless created
+  info_line '..created'
+end
+
+def id_time_for_app(app, id, account)
+  info_line "querying.. app: #{app}#{id ? "  id: #{id}" : ''}"
+  indices = indices_for_app_id(app, nil, account)
+  err_line "no id found for app: #{app}" unless indices.size > 0
+  indices = indices.select { |i| i.first == id } if id
+  err_line "no backup found for app: #{app}#{id ? "  id: #{id}" : ''}" unless indices.last
+  id, time = indices.last[0, 2]
+  info_line "queried, id: #{id} time: #{time}"
+  [id, time]
+end
+
+def download_for_url_file(url, file, resume)
+  info_line "downloading.. url: #{url}  file: #{file}"
+  downloaded = run_cmd "curl #{@verbose ? '' : '--progress-bar '}'#{url}' #{resume ? '--continue-at - --output' : '>'} #{file}.download"
+  err_line "failed to download url: #{url}" unless downloaded
+  moved = run_cmd "mv #{file}.download #{file}"
+  err_line "failed to move file: #{file}" unless moved
+  info_line '..downloaded'
+end
+
+def restore_for_file_database(file, database, sed)
+  info_line "restoring.. file: #{file}  database: #{database}"
+  restored = run_cmd "cat #{file} | #{restore_command(database, sed)}"
+  err_line "failed to restore database: #{database}" unless restored
+  info_line '..restored'
+end
+
+def deploy_for_template_database(template, database)
+  info_line "deploying.. database: #{database}  with template: #{template}"
+  list = run_cmd "psql --list | grep ' #{database} '"
+  if list && list.size > 0
+    dropped = run_cmd "psql --command='drop database #{database};'"
+    err_line "failed to drop database: #{database}" unless dropped
+  end
+  created = run_cmd "psql --command='create database #{database} with template #{template}'"
+  err_line "failed to deploy database: #{database}  with template: #{template}" unless created
+  info_line '..deployed'
+end
+
+def pipe_for_url_file_database(url, file, database, sed)
+  info_line "piping.. url: #{url}  database: #{database}  file: #{file}"
+  piped = run_cmd "curl #{@verbose ? '' : '--progress-bar '}'#{url}' | tee #{file}.download | #{restore_command(database, sed)}"
+  err_line "failed to pipe database: #{database}" unless piped
+  moved = run_cmd "mv #{file}.download #{file}"
+  err_line "failed to move file: #{file}" unless moved
+  info_line '..piped'
+end
+
+def pull_for_remote_database_app(remote, database, app, account)
+  info_line "pulling.. remote: #{remote}  database: #{database}"
+  pulled = run_cmd "heroku pg:pull #{remote} #{database} --app #{app}#{account_option(account)}#{@verbose ? '' : ' 2>/dev/null'}"
+  err_line "failed to pull from remote: #{remote}" unless pulled
+  info_line '..pulled'
+end
+
+# main
+
+def main
+  start_time = Time.now
+
+  # defaults
+  @verbose = false
+  @app = nil
+  @database = nil
+  @action = nil
+  @bin_dir = '/usr/local/bin'
+  @sed = nil
+  @force = false
+  @template = '_template'
+  @priority = false
+  @remote = nil
+  @account = nil
+
+  # read args
+  i = 0
+  while i < ARGV.size
+    case ARGV[i]
+    when '-v', '--verbose'
+      @verbose = true
+    when '-f', '--force'
+      @force = true
+    when '-n', '--no-template'
+      @template = nil
+    when '-p', '--priority'
+      @priority = true
+    when '-a', '--app'
+      i += 1
+      @app = ARGV[i]
+      err_line 'expecting app name' unless @app && @app =~ /\A[^-]/
+    when '-d', '--database'
+      i += 1
+      @database = ARGV[i]
+      err_line 'expecting local database name' unless @database && @database =~ /\A[^-]/
+    when '-i', '--id'
+      i += 1
+      @id = ARGV[i]
+      err_line 'expecting backup id' unless @id && @id =~ /\A[^-]/
+    when '-s', '--sed'
+      i += 1
+      @sed = ARGV[i]
+      err_line "expecting sed string, e.g. '/\ACREATE INDEX.*ON table USING.*;\z/d'" unless @sed && @sed =~ /\A[^-]/
+    when '-b', '--bin-dir'
+      i += 1
+      @bin_dir = ARGV[i]
+      err_line 'expecting bin directory' unless @bin_dir && @bin_dir =~ /\A[^-]/
+    when '-r', '--remote'
+      i += 1
+      @remote = ARGV[i]
+      err_line 'expecting remote database name' unless @remote && @remote =~ /\A[^-]/
+    when '-c', '--account'
+      i += 1
+      @account = ARGV[i]
+      err_line 'expecting account name' unless @account && @account =~ /\A[^-]/
+    when '-?', '--version'
+      @action = :version
+    when '-h', '--help'
+      @action = :help
+    else
+      @action = case ARGV[i]
+      when 'list', 'l' then :list
+      when 'available', 'a' then :available
+      when 'download', 'd' then :download
+      when 'restore', 'r' then :restore
+      when 'deploy', 'y' then :deploy
+      when 'pipe', 'p' then :pipe
+      when 'pull', 'l' then :pull
+      when 'clear', 'c' then :clear
+      when 'script', 's' then :script
+      when 'version', '?' then :version
+      when 'help', 'h' then :help
+      end
+      err_line "unknown action '#{ARGV[i]}', try 'help'" unless @action && @action =~ /\A[^-]/
+    end
+    i += 1
+  end
+
+  # check params and system
+  if %w(list available download pipe pull).include? @action.to_s
+    whiched = run_cmd 'which heroku'
+    err_line "heroku toolbelt not installed, try 'brew install heroku-toolbelt'" unless whiched
+  end
+  if %w(list available download restore pipe).include? @action.to_s
+    err_line 'expecting app' unless @app && @app.size > 0
+    tested = run_cmd 'test -e tmp'
+    err_line "no tmp folder found, cd to Rails project or try 'mkdir tmp'" unless tested
+  end
+  if %w(restore deploy pipe clear pull).include? @action.to_s
+    err_line 'expecting database' unless @database && @database.size > 0
+    whiched = run_cmd 'which psql'
+    err_line "postgres not installed, try 'brew install postgresql'" unless whiched
+    databased = run_cmd "psql --command=';'"
+    err_line "postgres server not running, try 'open -a Postgres'" unless databased
+  end
+
+  # run action
+  case @action
+  when :list
+    info_line 'searching for backups heroku and local..'
+    list = list_for_app_id(@app, @id)
+    indices = indices_for_app_id(@app, @id, @account)
+    puts 'no heroku backups found' if indices.size == 0
+    puts 'heroku backups:' if indices.size > 0
+    indices.each { |l| puts "  #{l[0]} at #{l[1]} (#{l[2]})" } if indices.size > 0
+    puts 'no local backups found' if list.size == 0
+    puts 'local backups:' if list.size > 0
+    list.each { |l| puts "  #{l[0]} at #{l[1]} (#{l[2]})" } if list.size > 0
+    info_line '.. searched'
+  when :available
+    id, _ = id_time_for_app(@app, @id, @account)
+    latest = indices_for_app_id(@app, nil, @account).last.join(', ')
+    if file_for_app_id?(@app, id)
+      puts "latest backup already downloaded: #{latest}"
+    else
+      puts "new remote backup available: #{latest}"
+    end
+  when :download
+    id, time = id_time_for_app(@app, @id, @account)
+    err_line "#{id} already downloaded, use force" unless @force || !file_for_app_id?(@app, id)
+    url = url_for_id_app(id, @app, @account)
+    file = file_for_id_app(id, @app, time)
+    download_for_url_file(url, file, !@force)
+  when :restore
+    recent = recent_for_app(@app, @id)
+    file = file_for_id_app(recent[0], @app, recent[1])
+    template = @database && @template ? @database + @template : @database
+    drop_for_database(template)
+    create_for_database(template)
+    restore_for_file_database(file, template, @sed)
+  when :deploy
+    template = @database && @template ? @database + @template : nil
+    deploy_for_template_database(template, @database)
+  when :pipe
+    id, time = id_time_for_app(@app, @id, @account)
+    err_line "#{id} already downloaded, use restore" unless @force || !file_for_app_id?(@app, id)
+    url = url_for_id_app(id, @app, @account)
+    file = file_for_id_app(id, @app, time)
+    template = @database && @template ? @database + @template : @database
+    drop_for_database(template)
+    create_for_database(template)
+    pipe_for_url_file_database(url, file, template, @sed)
+  when :pull
+    remote = @remote || remote_for_app(@app, @account)
+    template = @database && @template ? @database + @template : @database
+    drop_for_database(template)
+    pull_for_remote_database_app(remote, template, @app, @account)
+  when :clear
+    drop_for_database(@database)
+    create_for_database(@database)
+  when :script
+    info_line "installing herokudb script.. dir: #{@bin_dir}"
+    tested = run_cmd "test -d #{@bin_dir}"
+    err_line "#{@bin_dir} does not exists" unless tested
+    print `diff herokudb #{@bin_dir}/herokudb` if @verbose
+    line = run_cmd "cp #{@verbose ? '-v ' : ''}herokudb #{@bin_dir}/herokudb"
+    err_line 'unable to install script' unless line
+    info_line "#{line}"
+    info_line '.. installed'
+  when :help
+    print_help(true)
+  when :version
+    puts HDB_VERSION
+  else
+    print_help(false)
+  end
+
+  info_line "took #{Time.now - start_time} seconds"
+end
+
+main
