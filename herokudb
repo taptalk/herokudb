@@ -353,6 +353,7 @@ def main
   @app = nil
   @database = nil
   @action = nil
+  @bin_dir = '/usr/local/bin'
   @sed = nil
   @force = false
   @template = '_template'
@@ -388,6 +389,10 @@ def main
       i += 1
       @sed = ARGV[i]
       err_line "expecting sed string, e.g. '/\ACREATE INDEX.*ON table USING.*;\z/d'" unless @sed && @sed =~ /\A[^-]/
+    when '-b', '--bin-dir'
+      i += 1
+      @bin_dir = ARGV[i]
+      err_line 'expecting bin directory' unless @bin_dir && @bin_dir =~ /\A[^-]/
     when '-r', '--remote'
       i += 1
       @remote = ARGV[i]
@@ -410,6 +415,7 @@ def main
       when 'pipe', 'p' then :pipe
       when 'pull', 'l' then :pull
       when 'clear', 'c' then :clear
+      when 'script', 's' then :script
       when 'version', '?' then :version
       when 'help', 'h' then :help
       end
@@ -490,6 +496,15 @@ def main
   when :clear
     drop_for_database(@database)
     create_for_database(@database)
+  when :script
+    info_line "installing herokudb script.. dir: #{@bin_dir}"
+    tested = run_cmd "test -d #{@bin_dir}"
+    err_line "#{@bin_dir} does not exists" unless tested
+    print `diff herokudb #{@bin_dir}/herokudb` if @verbose
+    line = run_cmd "cp #{@verbose ? '-v ' : ''}herokudb #{@bin_dir}/herokudb"
+    err_line 'unable to install script' unless line
+    info_line "#{line}"
+    info_line '.. installed'
   when :help
     print_help(true)
   when :version

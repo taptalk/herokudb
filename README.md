@@ -5,14 +5,6 @@ HerokuDB
 
 *Ruby script for downloading and restoring Postgres backups made by the Heroku PG Backups addon*
 
-Installation
-------------
-To install this script to `/usr/local/bin`, run:
-
-```shell
-./herokudb script
-```
-
 About
 -----
 Heroku makes daily backups of your databases, you run a local Postgres
