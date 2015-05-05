@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-HDB_VERSION = '0.3.2'
+HDB_VERSION = '0.3.3'
 
 HDB_LONGHELP = <<-HDB_LONGHELP
 
@@ -9,8 +9,6 @@ database to experiment with, but how to get the backup to your local
 machine, conveniently? Use this script!
 
 ## Getting the backup restored locally
-
-Enable the 'PG Backups' addon, e.g. using `heroku addons:add pgbackups`.
 
 Typical use takes three commands:
 
@@ -198,14 +196,14 @@ end
 # helpers
 
 def url_for_id_app(id, app, account)
-  url = run_cmd "heroku pgbackups:url #{id} --app #{app}#{account_option(account)}"
+  url = run_cmd "heroku pg:backups public-url --quiet #{id} --app #{app}#{account_option(account)}"
   err_line 'unable to list heroku backups' unless url
   err_line "no url found for id: #{id}" unless url.size > 0
   url
 end
 
 def indices_for_app_id(app, id, account)
-  data = run_cmd "heroku pgbackups --app #{app}#{account_option(account)} | grep 'Finished @' | awk '{print $1, $2, $3, $8}'"
+  data = run_cmd "heroku pg:backups --app #{app}#{account_option(account)} | grep 'Finished ' | awk '{print $1, $2, $3, $8}'"
   err_line 'unable to query heroku backups' unless data
   indices = (data.split("\n") || []).map do |l|
     split = l.split(' ', 4)
@@ -431,6 +429,8 @@ def main
   end
   if %w(list available download restore pipe).include? @action.to_s
     err_line 'expecting app' unless @app && @app.size > 0
+  end
+  if %w(available download restore pipe).include? @action.to_s
     tested = run_cmd 'test -e tmp'
     err_line "no tmp folder found, cd to Rails project or try 'mkdir tmp'" unless tested
   end
