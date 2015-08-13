@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-HDB_VERSION = '0.3.3'
+HDB_VERSION = '0.3.4'
 
 HDB_LONGHELP = <<-HDB_LONGHELP
 
@@ -203,7 +203,7 @@ def url_for_id_app(id, app, account)
 end
 
 def indices_for_app_id(app, id, account)
-  data = run_cmd "heroku pg:backups --app #{app}#{account_option(account)} | grep 'Finished ' | awk '{print $1, $2, $3, $8}'"
+  data = run_cmd "heroku pg:backups --app #{app}#{account_option(account)} | grep 'Completed ' | awk '{print $1, $2, $3, $9}'"
   err_line 'unable to query heroku backups' unless data
   indices = (data.split("\n") || []).map do |l|
     split = l.split(' ', 4)
