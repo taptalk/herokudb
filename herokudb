@@ -8,6 +8,13 @@ Heroku makes daily backups of your databases, you run a local Postgres
 database to experiment with, but how to get the backup to your local
 machine, conveniently? Use this script!
 
+## Install
+
+To install check out the repository and run `./herokudb script`.
+Alternatively, install directly with:
+
+    curl https://raw.githubusercontent.com/taptalk/herokudb/master/herokudb > /usr/local/bin/herokudb
+
 ## Getting the backup restored locally
 
 Typical use takes three commands:
@@ -54,7 +61,9 @@ by using the pipe action in combination with `-n` and `-p`:
     herokudb pipe -n -p -a my_app -d my_database
 
 However in practice, it is usually more convenient to take the two-step
-approach:
+approach; you can continue to use the old database while the new one
+is being restored and your machine will remain responsive. *This is the
+recommend approach*:
 
     herokudb pipe -a my_app -d my_database --verbose
     herokudb deploy -d my_database --verbose
@@ -124,7 +133,7 @@ then make sure to add the `-c` option to provide the account name.
 
 HerokuDB is licensed under the terms of the MIT License.
 
-Made by @leonardvandriel. Copyright (c) 2013 Wit Dot Media Berlin GmbH.
+Made by @leonardvandriel. Copyright (c) 2013 Wit Dot Media.
 
 HDB_LONGHELP
 

@@ -11,9 +11,14 @@ Heroku makes daily backups of your databases, you run a local Postgres
 database to experiment with, but how to get the backup to your local
 machine, conveniently? Use this script!
 
-## Getting the backup restored locally
+## Install
 
-Enable the 'PG Backups' addon, e.g. using `heroku addons:add pgbackups`.
+To install check out the repository and run `./herokudb script`.
+Alternatively, install directly with:
+
+    curl https://raw.githubusercontent.com/taptalk/herokudb/master/herokudb > /usr/local/bin/herokudb
+
+## Getting the backup restored locally
 
 Typical use takes three commands:
 
@@ -59,7 +64,9 @@ by using the pipe action in combination with `-n` and `-p`:
     herokudb pipe -n -p -a my_app -d my_database
 
 However in practice, it is usually more convenient to take the two-step
-approach:
+approach; you can continue to use the old database while the new one
+is being restored and your machine will remain responsive. *This is the
+recommend approach*:
 
     herokudb pipe -a my_app -d my_database --verbose
     herokudb deploy -d my_database --verbose
@@ -112,15 +119,6 @@ Note that pulling skips remote and local backups, so it's mainly useful
 for impulsive needs. Creating a remote backup first makes for a much more
 reliable workflow.
 
-## Installing herokudb script
-
-For convenience, install this script to your `/usr/local/bin` folder. Use
-the `script` action:
-
-    herokudb script
-
-Optionally add `-b /somewhere/else` to install it somewhere else.
-
 ## Resuming failed download
 
 By default, failed downloads are resumed on the next attempt. This only
@@ -138,4 +136,4 @@ then make sure to add the `-c` option to provide the account name.
 
 HerokuDB is licensed under the terms of the MIT License.
 
-Made by @leonardvandriel. Copyright (c) 2013 Wit Dot Media Berlin GmbH.
+Made by @leonardvandriel. Copyright (c) 2013 Wit Dot Media.
